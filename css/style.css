@@ -159,6 +159,36 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 18px; }
 .seed { display: flex; gap: 4px; }
 .icon { border: 1px solid var(--line); background: var(--panel2); border-radius: 8px; cursor: pointer; padding: 0 8px; }
 
+.field-label { font-size: 12px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
+.hint.tight { margin: 6px 0 0; }
+.geos .biome.on { background: var(--accent2); border-color: var(--accent2); color: #04202b; }
+.org.design { border-style: dashed; justify-content: center; align-items: center; min-height: 120px; text-align: center; color: var(--muted); padding: 12px; }
+.org.design b { font-size: 22px; padding: 0; color: var(--accent); }
+.org.design:hover { color: var(--fg); }
+.org .org-actions { position: absolute; top: 6px; left: 6px; display: flex; gap: 4px; }
+.org .org-actions span {
+  background: rgba(10,12,18,.75); border: 1px solid var(--line); border-radius: 7px; width: 24px; height: 24px;
+  display: grid; place-items: center; font-size: 12px; cursor: pointer;
+}
+.org .org-actions span:hover { border-color: var(--accent2); }
+
+/* ---------------------------------------------------------------- designer */
+.designer { max-width: 900px; }
+.designer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 18px; }
+#d-preview { width: 100%; aspect-ratio: 4 / 3; border-radius: 12px; display: block; background: #121825; }
+.d-stats { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 4px; font-size: 13px; }
+.d-stats li { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
+.d-stats b { color: var(--accent); }
+.d-stats .muted { color: var(--muted); }
+.seg.wrap { flex-wrap: wrap; }
+.row.tight { margin-top: 0; }
+.sliders.compact { gap: 6px; margin-top: 10px; }
+.sliders.compact .slider label { font-size: 12px; margin-bottom: 0; }
+.slider .ends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: -2px; }
+.slider.hue input[type=range] { accent-color: #fff; background: linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red); border-radius: 9px; height: 10px; }
+.d-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 720px) { .designer-grid { grid-template-columns: 1fr; } }
+
 /* ---------------------------------------------------------------- events, scenarios */
 .event-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .event {

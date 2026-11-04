@@ -1,7 +1,7 @@
 // Drawing: procedural creatures (their look is computed from their genes),
 // the world view, and a few effects.
 import { GENE_INDEX as GI, TERRAINS, ORGANISM_BY_ID } from './presets.js';
-import { W, H, genomeRgb, hexToRgb } from './sim.js';
+import { W, H, genomeRgb, hexToRgb, geoSample } from './sim.js';
 import { makeRng } from './rng.js';
 
 const TAU = Math.PI * 2;
@@ -596,7 +596,7 @@ export const PLAN_EXTENT = { mammal: 2.3, insect: 2.6, microbe: 2.5, reptile: 3.
 
 const bgCache = new Map();
 function background(world) {
-  const key = `${world.env.terrain}|${world.seed}`;
+  const key = `${world.env.terrain}|${world.seed}|${world.env.geo || 'open'}`;
   if (bgCache.has(key)) return bgCache.get(key);
   const t = TERRAINS[world.env.terrain] || TERRAINS.grass;
   const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W, H) : Object.assign(document.createElement('canvas'), { width: W, height: H });
@@ -615,6 +615,7 @@ function background(world) {
     x.fillStyle = rgb(rng() < 0.5 ? shade(gr, -0.18) : shade(gr, 0.18), 0.35);
     x.fillRect(rng() * W, rng() * H, 1.5, 1.5);
   }
+  drawGeography(x, world.env.geo || 'open', rng);
   // north is colder, south warmer
   const grad = x.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, 'rgba(160,200,255,0.16)');
@@ -625,6 +626,55 @@ function background(world) {
   if (bgCache.size > 20) bgCache.clear();
   bgCache.set(key, c);
   return c;
+}
+
+// Water, shores, mountains and snow caps, painted once into the background.
+function drawGeography(x, geo, rng) {
+  if (geo === 'open') return;
+  const S = 4;
+  const kindAt = (px, py) => geoSample(geo, px, py)[0];
+  for (let py = 0; py < H; py += S) {
+    for (let px = 0; px < W; px += S) {
+      const [k, dT] = geoSample(geo, px + S / 2, py + S / 2);
+      if (k === 1) {
+        let shore = 0;
+        for (const [ox, oy] of [[10, 0], [-10, 0], [0, 10], [0, -10], [20, 0], [-20, 0], [0, 20], [0, -20]]) if (!kindAt(px + ox, py + oy)) shore++;
+        x.fillStyle = shore >= 3 ? '#5fb3d6' : shore ? '#3f8fbf' : '#2b6ca3';
+        x.fillRect(px, py, S + 0.5, S + 0.5);
+      } else if (k === 2) {
+        const n = rng();
+        x.fillStyle = dT < -11.3 ? (n < 0.5 ? '#f1f5f9' : '#dfe7ee') : n < 0.33 ? '#7a756e' : n < 0.66 ? '#6c6760' : '#86817a';
+        x.fillRect(px, py, S + 0.5, S + 0.5);
+      } else {
+        // sandy beaches next to water, frosty foothills next to peaks
+        if (geo !== 'mountains') {
+          for (const [ox, oy] of [[6, 0], [-6, 0], [0, 6], [0, -6]]) {
+            if (kindAt(px + ox, py + oy) === 1) {
+              x.fillStyle = 'rgba(232,214,160,0.75)';
+              x.fillRect(px, py, S + 0.5, S + 0.5);
+              break;
+            }
+          }
+        } else if (dT < -3) {
+          x.fillStyle = `rgba(240,245,250,${Math.min(0.55, (-dT - 3) / 12)})`;
+          x.fillRect(px, py, S + 0.5, S + 0.5);
+        }
+      }
+    }
+  }
+  // little waves
+  if (geo !== 'mountains') {
+    x.strokeStyle = 'rgba(255,255,255,0.22)';
+    x.lineWidth = 1.2;
+    x.beginPath();
+    for (let i = 0; i < 500; i++) {
+      const px = rng() * W, py = rng() * H;
+      if (kindAt(px, py) !== 1 || kindAt(px + 8, py) !== 1) continue;
+      x.moveTo(px, py);
+      x.quadraticCurveTo(px + 3, py - 2, px + 6, py);
+    }
+    x.stroke();
+  }
 }
 
 export function drawWorld(ctx, world, view) {

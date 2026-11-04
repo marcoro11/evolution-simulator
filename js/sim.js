@@ -4,15 +4,16 @@
 // Model in one paragraph: organisms wander a 2D world eating plants (or each
 // other), paying an energy cost every tick that depends on their genes and on
 // the environment (temperature, humidity, oxygen…). When they have enough
-// energy they reproduce asexually; offspring inherit the parent's genome with
-// small random mutations. Whoever is better suited to the environment leaves
+// energy they reproduce — by cloning, or (in mating mode) with a compatible
+// partner of the same species, mixing both genomes. Offspring inherit genes
+// with small random mutations. Whoever is better suited to the environment leaves
 // more offspring, so the population's average genome drifts over time.
 // Environmental predators hunt whoever they can see (camouflage helps), catch
 // whoever is slower (speed helps) and fail against armor or large bodies.
 
 import { makeRng } from './rng.js';
 import {
-  GENES, GENE_INDEX as GI, ORGANISM_BY_ID, TERRAINS, EVENTS, EPITHETS, SPECIES_COLORS,
+  GENES, GENE_INDEX as GI, ORGANISM_BY_ID, TERRAINS, EVENTS, EPITHETS, SPECIES_COLORS, GEO_BY_ID,
 } from './presets.js';
 
 export const W = 1000;
@@ -20,7 +21,10 @@ export const H = 640;
 export const YEAR = 200; // ticks per simulated year
 export const MAX_POP = 650;
 const CELL = 40;
-const LAT = 10; // °C difference between the north (top) and south (bottom) edge
+const GC = 10; // geography grid resolution
+const GCOLS = W / GC, GROWS = H / GC;
+const LEAK = [0, 0.0005, 0.0003]; // chance per bump to swim across water / climb rock
+const MATE_T = 0.5; // max genetic distance between mates
 const NG = GENES.length;
 const MAX_SPECIES = 8;
 const SPLIT_T = 0.4;
@@ -120,6 +124,45 @@ function plantTempFactor(T) {
   return clamp(Math.exp(-x * x), 0.2, 1);
 }
 
+// ---------------------------------------------------------------- geography
+
+// Cheap smooth noise so coastlines aren't perfect ellipses.
+function wobble(x, y) {
+  return Math.sin(x * 0.021 + 1.3) * Math.sin(y * 0.017 + 0.7) * 0.5 + Math.sin(x * 0.047 + y * 0.031) * 0.3 + Math.sin(x * 0.11 - y * 0.09) * 0.12;
+}
+
+// What's at (x, y)? Returns [kind, dT]: kind 0 = land, 1 = water, 2 = rock;
+// dT = local temperature offset (mountains are cold).
+export function geoSample(type, x, y) {
+  switch (type) {
+    case 'river': {
+      const ry = H / 2 + 55 * Math.sin(x / 110) + 22 * Math.sin(x / 41 + 1);
+      return [Math.abs(y - ry) < 19 + 4 * Math.sin(x / 23) ? 1 : 0, 0];
+    }
+    case 'lake': {
+      const e = ((x - 500) / 280) ** 2 + ((y - 320) / 165) ** 2 + wobble(x, y) * 0.18;
+      return [e < 1 ? 1 : 0, 0];
+    }
+    case 'islands': {
+      let best = Infinity;
+      for (const [cx, cy] of [[255, 160], [745, 160], [255, 480], [745, 480]]) {
+        const e = ((x - cx) / 195) ** 2 + ((y - cy) / 118) ** 2 + wobble(x, y) * 0.28;
+        if (e < best) best = e;
+      }
+      return [best < 1 ? 0 : 1, 0];
+    }
+    case 'mountains': {
+      const rx = W / 2 + 55 * Math.sin(y / 80) + 15 * Math.sin(y / 23);
+      const d = Math.abs(x - rx);
+      const pass = Math.abs(y - 330) < 32;
+      const dT = d < 150 ? -12 * (1 - d / 150) ** 1.4 : 0;
+      return [d < 30 && !pass ? 2 : 0, dT];
+    }
+    default:
+      return [0, 0];
+  }
+}
+
 // ---------------------------------------------------------------- world
 
 export class World {
@@ -127,8 +170,9 @@ export class World {
     this.configure(opts);
   }
 
-  configure({ env, organisms, seed = 1, label = '' }) {
+  configure({ env, organisms, seed = 1, label = '', sexual = false }) {
     this.env = { ...env };
+    this.sexual = !!sexual;
     this.organismIds = organisms.slice();
     this.seed = seed;
     this.label = label;
@@ -161,7 +205,8 @@ export class World {
     this.deaths = { starved: 0, old: 0, predator: 0, eaten: 0, cold: 0, heat: 0, disaster: 0 };
     this.births = 0;
     this.lineageAlive = new Map();
-    this.oases = Array.from({ length: 5 }, () => ({ x: rng.range(80, W - 80), y: rng.range(80, H - 80), r: rng.range(50, 90) }));
+    this.buildGeo();
+    this.oases = this.pickOases();
     this.ground = hexToRgb((TERRAINS[this.env.terrain] || TERRAINS.grass).ground);
     this.computeEnv();
 
@@ -184,7 +229,8 @@ export class World {
       const count = preset.genome[DIET] > 0.5 && ids.length > 1 ? Math.round(per * 0.35) : per;
       for (let i = 0; i < count; i++) {
         const g = preset.genome.map((v, k) => (k === HUE ? (v + rng.normal() * 0.01 + 1) % 1 : clamp(v + rng.normal() * 0.02, 0, 1)));
-        const o = this.makeOrg(g, preset, sp.id, rng.range(10, W - 10), rng.range(10, H - 10), 0);
+        const [x, y] = this.randomLand();
+        const o = this.makeOrg(g, preset, sp.id, x, y, 0);
         o.energy = o.p.maxEnergy * rng.range(0.4, 0.7);
         o.body = o.p.mass * BODY_PER_MASS * rng.range(0.5, 1);
         o.age = Math.floor(rng() * o.p.maturity * 1.5);
@@ -203,11 +249,91 @@ export class World {
   // Change the environment while the simulation is running.
   setEnv(env) {
     const terrainChanged = env.terrain !== this.env.terrain;
+    const geoChanged = (env.geo || 'open') !== (this.env.geo || 'open');
     this.env = { ...env };
+    if (geoChanged) this.reshapeLand();
     if (terrainChanged) {
       this.ground = hexToRgb((TERRAINS[this.env.terrain] || TERRAINS.grass).ground);
       for (const o of this.orgs) o.p.contrast = contrastWith(o.p.rgb, this.ground);
     }
+  }
+
+  // ---------------------------------------------------------------- geography
+
+  buildGeo() {
+    const type = this.env.geo || 'open';
+    this.geo = new Uint8Array(GCOLS * GROWS);
+    this.geoT = new Float32Array(GCOLS * GROWS);
+    this.landCells = [];
+    for (let cy = 0; cy < GROWS; cy++) {
+      for (let cx = 0; cx < GCOLS; cx++) {
+        const i = cy * GCOLS + cx;
+        const [k, dT] = geoSample(type, (cx + 0.5) * GC, (cy + 0.5) * GC);
+        this.geo[i] = k;
+        this.geoT[i] = dT;
+        if (!k) this.landCells.push(i);
+      }
+    }
+  }
+
+  geoAt(x, y) {
+    return this.geo[Math.min(GROWS - 1, (y / GC) | 0) * GCOLS + Math.min(GCOLS - 1, (x / GC) | 0)];
+  }
+
+  randomLand() {
+    const i = this.landCells[this.rng.int(this.landCells.length)];
+    return [((i % GCOLS) + this.rng()) * GC, (Math.floor(i / GCOLS) + this.rng()) * GC];
+  }
+
+  nearestLand(x, y) {
+    const cx0 = (x / GC) | 0, cy0 = (y / GC) | 0;
+    for (let r = 1; r < 25; r++) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const cx = clamp(Math.round(cx0 + Math.cos(a) * r), 0, GCOLS - 1), cy = clamp(Math.round(cy0 + Math.sin(a) * r), 0, GROWS - 1);
+        if (!this.geo[cy * GCOLS + cx]) return [(cx + 0.5) * GC, (cy + 0.5) * GC];
+      }
+    }
+    return this.randomLand();
+  }
+
+  pickOases() {
+    return Array.from({ length: 5 }, () => {
+      const [x, y] = this.randomLand();
+      return { x: clamp(x, 70, W - 70), y: clamp(y, 70, H - 70), r: this.rng.range(50, 90) };
+    });
+  }
+
+  // The landscape changed mid-run: move stranded creatures, drown plants.
+  reshapeLand() {
+    this.buildGeo();
+    this.oases = this.pickOases();
+    let moved = 0;
+    for (const o of this.orgs) {
+      if (this.geoAt(o.x, o.y)) {
+        [o.x, o.y] = this.nearestLand(o.x, o.y);
+        moved++;
+      }
+    }
+    for (const pr of this.preds) if (this.geoAt(pr.x, pr.y)) [pr.x, pr.y] = this.nearestLand(pr.x, pr.y);
+    for (const cell of this.plantCells) {
+      for (let i = cell.length - 1; i >= 0; i--) {
+        if (this.geoAt(cell[i].x, cell[i].y)) {
+          cell[i] = cell[cell.length - 1];
+          cell.pop();
+          this.plantCount--;
+        }
+      }
+    }
+    const g = GEO_BY_ID[this.env.geo || 'open'];
+    this.addLog(g.emoji, `The land reshaped: ${g.name.toLowerCase()}. ${g.desc}`);
+    this.markers.push({ tick: this.tick, icon: g.emoji });
+  }
+
+  setSexual(on) {
+    if (this.sexual === !!on) return;
+    this.sexual = !!on;
+    this.addLog(on ? '💞' : '🧬', on ? 'Reproduction switched to mating: genes now mix between partners.' : 'Reproduction switched to cloning.');
   }
 
   addSpecies({ name, presetId, parentId, centroid }) {
@@ -229,7 +355,7 @@ export class World {
       id: this.nextId++, g, p, preset: preset.id, sp: spId,
       x, y, angle: this.rng() * Math.PI * 2,
       energy: p.maxEnergy * 0.5, age: 0, gen, cool: 0, hunt: 0,
-      tgt: null, scan: 0, dead: null, state: 0, chasedBy: null, body: 0,
+      tgt: null, scan: 0, dead: null, state: 0, chasedBy: null, body: 0, lonely: 0, cross: 0,
     };
     p.fear = killChance(o);
     return o;
@@ -272,8 +398,9 @@ export class World {
     return 1;
   }
 
-  localTemp(y) {
-    return this.cur.T + (y / H - 0.5) * LAT;
+  localTemp(x, y) {
+    const gi = Math.min(GROWS - 1, (y / GC) | 0) * GCOLS + Math.min(GCOLS - 1, (x / GC) | 0);
+    return this.cur.T + (y / H - 0.5) * (this.env.gradient ?? 10) + this.geoT[gi];
   }
 
   maxPlants() {
@@ -284,7 +411,8 @@ export class World {
     const rng = this.rng;
     const oasisFrac = clamp((0.5 - this.cur.hum) * 2, 0, 0.92);
     let x, y;
-    for (let tries = 0; tries < 4; tries++) {
+    let ok = false, gx = 0, gy = 0;
+    for (let tries = 0; tries < 6; tries++) {
       if (rng() < oasisFrac) {
         const o = rng.pick(this.oases);
         const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * o.r;
@@ -294,11 +422,18 @@ export class World {
         x = rng() * W;
         y = rng() * H;
       }
-      // Plants also prefer the latitude with the best temperature.
-      if (rng() < plantTempFactor(this.localTemp(y)) / plantTempFactor(this.cur.T + 5) || tries === 3) break;
+      x = clamp(x, 1, W - 1);
+      y = clamp(y, 1, H - 1);
+      if (this.geoAt(x, y)) continue; // nothing grows in water or on bare rock
+      ok = true;
+      gx = x;
+      gy = y;
+      // Plants also prefer the places with the best temperature.
+      if (rng() < plantTempFactor(this.localTemp(x, y)) / plantTempFactor(this.cur.T + 5)) break;
     }
-    x = clamp(x, 1, W - 1);
-    y = clamp(y, 1, H - 1);
+    if (!ok) return;
+    x = gx;
+    y = gy;
     const c = this.cellOf(x, y);
     this.plantCells[c].push({ x, y });
     this.plantCount++;
@@ -372,10 +507,9 @@ export class World {
     if (this.preds.length < target && (instant || rng() < 0.05)) {
       const n = instant ? target - this.preds.length : 1;
       for (let i = 0; i < n; i++) {
-        const edge = rng.int(4);
+        const [x, y] = this.randomLand();
         this.preds.push({
-          x: edge === 0 ? 0 : edge === 1 ? W : rng() * W,
-          y: edge === 2 ? 0 : edge === 3 ? H : rng() * H,
+          x, y,
           angle: rng() * Math.PI * 2, rest: 0, tgt: null, chase: 0, id: this.nextId++,
         });
       }
@@ -441,13 +575,26 @@ export class World {
     }
   }
 
-  moveEntity(e, spd) {
-    e.x += Math.cos(e.angle) * spd;
-    e.y += Math.sin(e.angle) * spd;
-    if (e.x < 2) { e.x = 2; e.angle = Math.PI - e.angle; }
-    else if (e.x > W - 2) { e.x = W - 2; e.angle = Math.PI - e.angle; }
-    if (e.y < 2) { e.y = 2; e.angle = -e.angle; }
-    else if (e.y > H - 2) { e.y = H - 2; e.angle = -e.angle; }
+  // Returns false if a barrier stopped the move.
+  moveEntity(e, spd, canCross = false) {
+    let nx = e.x + Math.cos(e.angle) * spd;
+    let ny = e.y + Math.sin(e.angle) * spd;
+    if (nx < 2) { nx = 2; e.angle = Math.PI - e.angle; }
+    else if (nx > W - 2) { nx = W - 2; e.angle = Math.PI - e.angle; }
+    if (ny < 2) { ny = 2; e.angle = -e.angle; }
+    else if (ny > H - 2) { ny = H - 2; e.angle = -e.angle; }
+    const k = this.geo[((ny / GC) | 0) * GCOLS + ((nx / GC) | 0)];
+    if (k && !(e.cross > 0) && !this.geo[((e.y / GC) | 0) * GCOLS + ((e.x / GC) | 0)]) {
+      if (canCross && this.rng() < LEAK[k]) {
+        e.cross = 90; // a brave swimmer / climber sets off
+      } else {
+        e.angle += Math.PI * (0.6 + this.rng() * 0.8);
+        return false;
+      }
+    }
+    e.x = nx;
+    e.y = ny;
+    return true;
   }
 
   // -------------------------------------------------------------- organisms
@@ -476,7 +623,8 @@ export class World {
       o.age++;
       if (o.cool > 0) o.cool--;
       if (o.hunt > 0) o.hunt--;
-      const T = this.localTemp(o.y);
+      if (o.cross > 0) o.cross--;
+      const T = this.localTemp(o.x, o.y);
 
       // --- energy bill
       let cost = p.baseCost;
@@ -568,8 +716,12 @@ export class World {
         spd = Math.min(p.speed, 0.55);
       }
       spd *= speedMul;
-      this.moveEntity(o, spd);
+      if (!this.moveEntity(o, spd, true) && mode === 1) {
+        o.tgt = null; // food is across a barrier: give up on it for now
+        o.scan = 12;
+      }
       cost += 0.018 * p.mass08 * Math.pow(spd, 1.6);
+      if (this.geo[((o.y / GC) | 0) * GCOLS + ((o.x / GC) | 0)]) cost += 0.05 * p.sqrtMass; // swimming / climbing is hard work
       o.state = mode;
 
       // --- eat
@@ -605,13 +757,24 @@ export class World {
 
       // --- reproduce
       if (o.cool === 0 && o.age > p.maturity && o.energy > p.maxEnergy * 0.6 && rng() < breedChance) {
+        let mate = null;
+        if (this.sexual) {
+          mate = this.findMate(o);
+          // Nobody around: try again later. After many lonely tries, fall back
+          // on self-fertilisation (some real animals do this too).
+          if (!mate && ++o.lonely < 6) {
+            o.cool = 6;
+            continue;
+          }
+          o.lonely = 0;
+        }
         const preset = ORGANISM_BY_ID[o.preset];
         const kids = p.litter;
         const invest = o.energy * 0.55;
         o.energy -= invest;
         const each = (invest * 0.9) / kids;
         for (let k = 0; k < kids; k++) {
-          const cg = this.mutate(g, mutSd, bigMut);
+          const cg = this.mutate(mate ? this.crossover(g, mate.g) : g, mutSd, bigMut);
           const child = this.makeOrg(cg, preset, o.sp,
             clamp(o.x + rng.normal() * 6, 2, W - 2), clamp(o.y + rng.normal() * 6, 2, H - 2), o.gen + 1);
           child.body = each * 0.4;
@@ -622,6 +785,25 @@ export class World {
         o.cool = Math.round(25 + p.sizeF * 22);
       }
     }
+  }
+
+  // A mature partner of the same species, genetically compatible, nearby.
+  findMate(o) {
+    let best = null, bd = Infinity;
+    const r = Math.max(o.p.sense * 2.5, 170);
+    this.query(this.orgCells, o.x, o.y, r, (q, dx, dy, d2) => {
+      if (q === o || q.dead || q.sp !== o.sp || q.age < q.p.maturity || d2 >= bd) return;
+      if (geneDistance(o.g, q.g) > MATE_T) return;
+      bd = d2;
+      best = q;
+    });
+    return best;
+  }
+
+  crossover(a, b) {
+    const c = new Array(NG);
+    for (let i = 0; i < NG; i++) c[i] = this.rng() < 0.5 ? a[i] : b[i];
+    return c;
   }
 
   findFood(o) {
@@ -789,7 +971,10 @@ export class World {
           c2 = m.g;
         }
       }
-      if (far < SPLIT_T) continue;
+      // With mating, a group only becomes a new species once it is too different
+      // to interbreed with the rest.
+      const splitT = this.sexual ? MATE_T : SPLIT_T;
+      if (far < splitT) continue;
       let A = [], B = [];
       for (let it = 0; it < 4; it++) {
         A = [];
@@ -800,7 +985,7 @@ export class World {
         c2 = meanGenome(B);
       }
       const minSize = Math.max(6, members.length * 0.1);
-      if (A.length < minSize || B.length < minSize || geneDistance(c1, c2) < SPLIT_T) continue;
+      if (A.length < minSize || B.length < minSize || geneDistance(c1, c2) < splitT) continue;
       const [stay, go, cStay, cGo] = A.length >= B.length ? [A, B, c1, c2] : [B, A, c2, c1];
       const child = this.addSpecies({
         name: this.nameSpecies(sp, cGo, cStay),
@@ -969,7 +1154,7 @@ export class World {
 }
 
 // Probability that a predator attack on this organism succeeds.
-function killChance(q) {
+export function killChance(q) {
   // Armor deflects, agility dodges, sheer size intimidates.
   let p = (1 - q.g[ARMOR] * 0.8) * (1 - clamp((q.p.speed - 0.9) / 1.8, 0, 0.8));
   if (q.p.sizeF > 1.6) p *= Math.max(0.05, 1 - (q.p.sizeF - 1.6) * 0.9);
