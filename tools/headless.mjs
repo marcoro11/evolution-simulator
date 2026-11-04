@@ -1,5 +1,6 @@
 // Run the simulation without a browser to check balance.
 // Usage: node tools/headless.mjs [years] [organism,...] [biome,...] [seeds]
+// Env vars: SEXUAL=1 (mating), GEO=river|mountains|lake|islands, GRADIENT=<°C>.
 // Prints, per biome, how many seeds survived and the average trait change.
 import { World, YEAR, meanGenome } from '../js/sim.js';
 import { BIOMES, BIOME_BY_ID, GENES } from '../js/presets.js';
@@ -16,7 +17,8 @@ for (const id of biomes) {
   const sum = new Array(show.length).fill(0);
   const ext = [];
   for (let s = 1; s <= seeds; s++) {
-    const w = new World({ env: BIOME_BY_ID[id].env, organisms: orgs, seed: s * 7919 });
+    const env = { ...BIOME_BY_ID[id].env, geo: process.env.GEO || 'open', ...(process.env.GRADIENT ? { gradient: Number(process.env.GRADIENT) } : {}) };
+    const w = new World({ env, organisms: orgs, seed: s * 7919, sexual: !!process.env.SEXUAL });
     const start = meanGenome(w.orgs);
     const t0 = performance.now();
     while (w.tick < years * YEAR && !w.extinct) w.step();

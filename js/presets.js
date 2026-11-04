@@ -126,18 +126,31 @@ export const ENV_FIELDS = [
   { key: 'predators', label: 'Predators', icon: '🐾', min: 0, max: 10, step: 1, unit: '' },
   { key: 'oxygen', label: 'Oxygen', icon: '🫁', min: 10, max: 35, step: 1, unit: '%' },
   { key: 'radiation', label: 'Radiation (mutation)', icon: '☢️', min: 0, max: 10, step: 0.5, unit: '×' },
+  { key: 'gradient', label: 'North–south difference', icon: '🧭', min: 0, max: 40, step: 1, unit: '°C' },
 ];
+
+// Landscapes. Barriers (water, rock) block movement; once in a while a
+// creature swims or climbs across, which keeps a trickle of gene flow.
+export const GEOGRAPHIES = [
+  { id: 'open', name: 'Open plain', emoji: '🟩', desc: 'No barriers — everyone can meet everyone.' },
+  { id: 'river', name: 'River', emoji: '🌊', desc: 'A river splits the land into a north and a south bank. Few creatures ever cross.' },
+  { id: 'mountains', name: 'Mountain range', emoji: '⛰️', desc: 'An impassable ridge with a single pass. Cold near the peaks.' },
+  { id: 'lake', name: 'Great lake', emoji: '💧', desc: 'A ring of land around a big lake.' },
+  { id: 'islands', name: 'Archipelago', emoji: '🏝️', desc: 'Four islands. Northern ones are colder — perfect for speciation.' },
+];
+export const GEO_BY_ID = Object.fromEntries(GEOGRAPHIES.map((g) => [g.id, g]));
 
 export const BIOMES = [
   { id: 'meadow', name: 'Temperate meadow', emoji: '🌼', env: { temperature: 15, seasonality: 12, humidity: 60, food: 100, predators: 3, oxygen: 21, radiation: 1, terrain: 'grass' } },
   { id: 'tundra', name: 'Arctic tundra', emoji: '🧊', env: { temperature: -10, seasonality: 10, humidity: 40, food: 100, predators: 2, oxygen: 21, radiation: 1, terrain: 'snow' } },
-  { id: 'desert', name: 'Scorching desert', emoji: '🏜️', env: { temperature: 35, seasonality: 8, humidity: 12, food: 70, predators: 2, oxygen: 21, radiation: 1.5, terrain: 'sand' } },
+  { id: 'desert', name: 'Scorching desert', emoji: '🏜️', env: { temperature: 32, seasonality: 8, humidity: 15, food: 80, predators: 2, oxygen: 21, radiation: 1.5, terrain: 'sand' } },
   { id: 'jungle', name: 'Tropical rainforest', emoji: '🌴', env: { temperature: 27, seasonality: 2, humidity: 95, food: 170, predators: 6, oxygen: 22, radiation: 1, terrain: 'forest' } },
   { id: 'volcano', name: 'Volcanic island', emoji: '🌋', env: { temperature: 30, seasonality: 4, humidity: 50, food: 80, predators: 1, oxygen: 19, radiation: 3, terrain: 'ash' } },
   { id: 'carboniferous', name: 'Carboniferous swamp', emoji: '🪵', env: { temperature: 24, seasonality: 3, humidity: 90, food: 140, predators: 2, oxygen: 33, radiation: 1, terrain: 'swamp' } },
   { id: 'hunting', name: 'Predator paradise', emoji: '🐆', env: { temperature: 20, seasonality: 6, humidity: 55, food: 120, predators: 10, oxygen: 21, radiation: 1, terrain: 'rock' } },
   { id: 'mars', name: 'Terraformed Mars', emoji: '🔴', env: { temperature: -4, seasonality: 16, humidity: 20, food: 70, predators: 0, oxygen: 17, radiation: 4, terrain: 'red' } },
 ];
+for (const b of BIOMES) b.env = { gradient: 10, ...b.env };
 export const BIOME_BY_ID = Object.fromEntries(BIOMES.map((b) => [b.id, b]));
 
 // Disasters / interventions the user can unleash while a run is going.
@@ -176,7 +189,7 @@ export const SPECIES_COLORS = [
 ];
 
 // One-click experiments that show off a specific evolutionary idea.
-const env = (id, over = {}) => ({ ...BIOME_BY_ID[id].env, ...over, biome: Object.keys(over).length ? 'custom' : id });
+const env = (id, over = {}, geo = 'open') => ({ ...BIOME_BY_ID[id].env, ...over, geo, biome: Object.keys(over).length ? 'custom' : id });
 export const SCENARIOS = [
   {
     id: 'bergmann', emoji: '🧊', name: 'Cold makes you big & furry',
@@ -210,4 +223,43 @@ export const SCENARIOS = [
     desc: 'Cold, thin air, harsh radiation. Most lineages die — survivors change fast.',
     organisms: ['rabbit', 'beetle', 'lizard'], compare: false, envA: env('mars'), envB: env('meadow'),
   },
+  {
+    id: 'islands', emoji: '🏝️', name: 'Island speciation',
+    desc: 'Finches on four islands with cold north and hot south, mating on. Each island goes its own way.',
+    organisms: ['finch'], compare: false, sexual: true,
+    envA: env('meadow', { temperature: 15, gradient: 40, seasonality: 6, predators: 2, radiation: 2 }, 'islands'),
+    envB: env('meadow'),
+  },
+  {
+    id: 'river', emoji: '🌊', name: 'A river divides',
+    desc: 'Mating on, cold north and warm south. On the open plain genes keep mixing; split by a river, each bank goes its own way.',
+    organisms: ['rabbit'], compare: true, sexual: true,
+    envA: env('meadow', { gradient: 30, radiation: 2 }, 'open'),
+    envB: env('meadow', { gradient: 30, radiation: 2 }, 'river'),
+  },
 ];
+
+// Body plans for the organism designer, with the built-in traits each brings.
+export const PLAN_INFO = {
+  microbe: { label: 'Microbe', emoji: '🦠', mods: { lifeMul: 0.7, ecto: true, skinMul: 1.2, insect: false }, note: 'Cold-blooded, short-lived.' },
+  insect: { label: 'Insect', emoji: '🪲', mods: { lifeMul: 0.85, ecto: true, skinMul: 0.7, insect: true }, note: 'Cold-blooded; oxygen limits size.' },
+  mammal: { label: 'Mammal', emoji: '🐾', mods: { lifeMul: 1, ecto: false, skinMul: 1, insect: false }, note: 'Warm-blooded.' },
+  reptile: { label: 'Reptile', emoji: '🦎', mods: { lifeMul: 1.1, ecto: true, skinMul: 0.6, insect: false }, note: 'Cold-blooded, water-tight skin.' },
+  amphibian: { label: 'Amphibian', emoji: '🐸', mods: { lifeMul: 0.9, ecto: true, skinMul: 2.2, insect: false }, note: 'Cold-blooded; dries out easily.' },
+  bird: { label: 'Bird', emoji: '🐦', mods: { lifeMul: 1, ecto: false, skinMul: 1, insect: false }, note: 'Warm-blooded.' },
+};
+
+// Make a designer-made organism known to the simulation and renderer.
+export function makeCustomOrganism({ id, name, plan, genome, look = {} }) {
+  const info = PLAN_INFO[plan] || PLAN_INFO.mammal;
+  const clean = (name || 'Novum').replace(/[^A-Za-z]/g, '') || 'Novum';
+  const genus = clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+  const o = {
+    id, name: name || 'Custom', emoji: info.emoji, plan, custom: true,
+    genus: /(us|a|um|is|on)$/.test(genus) ? genus : `${genus}us`, epithet: 'novus',
+    tag: `${info.label.toLowerCase()} · your design`, plural: `${name || 'custom'}s`,
+    blurb: 'Your own design.', genome: genome.slice(), mods: { ...info.mods }, look: { ...look },
+  };
+  ORGANISM_BY_ID[id] = o;
+  return o;
+}

@@ -43,6 +43,11 @@
         <h2><span class="step">1</span> Starting life</h2>
         <p class="hint">Pick one or more. Mix a hunter with prey to get a food chain.</p>
         <div id="organisms" class="org-grid"></div>
+        <div class="field-label">Reproduction</div>
+        <div id="repro" class="seg small">
+          <button data-mode="clone">🧬 Cloning</button><button data-mode="mate">💞 Mating</button>
+        </div>
+        <p id="repro-hint" class="hint tight"></p>
       </section>
 
       <section class="panel">
@@ -53,7 +58,10 @@
           <button id="copy-env" class="copy" title="Copy World A's settings into World B">A → B</button>
         </div>
         <p class="hint">Changes apply live — try shifting the climate mid-run.</p>
+        <div class="field-label">Climate</div>
         <div id="biomes" class="biomes"></div>
+        <div class="field-label">Landscape</div>
+        <div id="geos" class="biomes geos"></div>
         <div id="env-sliders" class="sliders"></div>
         <div class="row">
           <label class="field">Ground
@@ -151,7 +159,11 @@
       <li>Crank oxygen to 33% for beetles: hello, giant insects.</li>
       <li>Drop a ☄️ meteor or start an ❄️ ice age mid-run and see who recovers.</li>
       <li>Click any creature in the world to inspect it.</li>
+      <li>Pick an 🏝️ archipelago or a 🌊 river, switch to 💞 mating and raise the north–south difference: separated populations drift apart into new species.</li>
+      <li>Hit <em>＋ Design your own</em> to build a creature from scratch.</li>
     </ul>
+    <h3>Cloning vs mating</h3>
+    <p>With <strong>cloning</strong> every baby is a copy of one parent (plus mutations). With <strong>mating</strong> a parent needs a nearby partner of the same species, and the baby gets a mix of both genomes. Mixing keeps a population together — so new species mostly appear when groups get <strong>separated</strong> (by water, mountains or distance) and drift too far apart to interbreed. If no partner shows up for a long time, a lonely creature can fall back on self-fertilising.</p>
     <h3>Reading the screen</h3>
     <ul>
       <li>The <strong>top of each world is colder</strong>, the bottom warmer — creatures migrate to where they’re comfortable.</li>
@@ -159,6 +171,31 @@
       <li>The <strong>timelapse</strong> shows the most common species at each moment; drag the slider to scrub through time.</li>
     </ul>
     <p class="hint">Keyboard: <kbd>Space</kbd> run/pause · <kbd>R</kbd> new run · <kbd>1</kbd>–<kbd>5</kbd> speed.</p>
+  </dialog>
+
+  <dialog id="designer" class="help designer">
+    <form method="dialog"><button class="close" aria-label="Close">✕</button></form>
+    <h2>✏️ Design an organism</h2>
+    <div class="designer-grid">
+      <div class="d-left">
+        <canvas id="d-preview" aria-label="Preview"></canvas>
+        <ul id="d-stats" class="d-stats"></ul>
+      </div>
+      <div class="d-right">
+        <div class="row tight">
+          <label class="field">Name <input id="d-name" maxlength="18" placeholder="e.g. Fluffball"></label>
+          <label class="field">Start from <select id="d-base"></select></label>
+        </div>
+        <div class="field-label">Body plan</div>
+        <div id="d-plans" class="seg small wrap"></div>
+        <div id="d-look" class="row tight"></div>
+        <div id="d-genes" class="sliders compact"></div>
+      </div>
+    </div>
+    <div class="d-actions">
+      <button class="btn" id="d-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="d-save" type="button">Save &amp; add</button>
+    </div>
   </dialog>
 
   <script type="module" src="js/main.js"></script>

@@ -1,9 +1,9 @@
 // UI controller: builds the sidebar, runs the animation loop, renders worlds,
 // the timelapse, charts, family tree and journal.
-import { World, YEAR, W, H, meanGenome, genomeRgb } from './sim.js';
+import { World, YEAR, W, H, meanGenome, genomeRgb, phenotype, killChance } from './sim.js';
 import {
   ORGANISMS, ORGANISM_BY_ID, BIOMES, BIOME_BY_ID, ENV_FIELDS, TERRAINS, EVENTS,
-  GENES, GENE_INDEX, METRICS, SCENARIOS,
+  GENES, GENE_INDEX, METRICS, SCENARIOS, GEOGRAPHIES, GEO_BY_ID, PLAN_INFO, PLANS, makeCustomOrganism,
 } from './presets.js';
 import { drawWorld, drawCreature, pickOrganism, PLAN_EXTENT } from './render.js';
 import { LineChart, drawTree } from './charts.js';
@@ -30,10 +30,13 @@ const VISIBLE_GENES = GENES.map((g, i) => ({ ...g, i })).filter((g) => !g.hidden
 // ------------------------------------------------------------------ state
 
 const randomSeed = () => Math.floor(Math.random() * 1e6);
-const envFromBiome = (id) => ({ ...BIOME_BY_ID[id].env, biome: id });
+const envFromBiome = (id) => ({ ...BIOME_BY_ID[id].env, geo: 'open', biome: id });
+const MAX_CUSTOM = 6;
 
 const state = {
   organisms: ['rabbit'],
+  customs: [], // designer-made organisms: { id, name, plan, genome, look }
+  sexual: false,
   compare: false,
   seed: randomSeed(),
   env: { A: envFromBiome('meadow'), B: envFromBiome('tundra') },
@@ -55,17 +58,53 @@ const views = {}; // per world key: DOM refs + selection
 
 function encodeConfig() {
   const strip = (e) => Object.fromEntries(Object.entries(e));
-  const cfg = { o: state.organisms, c: state.compare ? 1 : 0, s: state.seed, a: strip(state.env.A), b: strip(state.env.B) };
+  const cfg = configObject();
+  cfg.a = strip(cfg.a);
+  cfg.b = strip(cfg.b);
   return btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function applyConfig(cfg) {
+function configObject() {
+  // only include designs that are in use, so share links stay short
+  const x = state.customs.filter((c) => state.organisms.includes(c.id));
+  return { o: state.organisms, c: state.compare ? 1 : 0, m: state.sexual ? 1 : 0, s: state.seed, a: state.env.A, b: state.env.B, x };
+}
+
+function validCustom(c) {
+  if (!c || typeof c !== 'object' || typeof c.id !== 'string' || !/^c\d{1,9}$/.test(c.id)) return null;
+  if (!PLAN_INFO[c.plan] || !Array.isArray(c.genome) || c.genome.length !== GENES.length) return null;
+  if (!c.genome.every((v) => typeof v === 'number' && isFinite(v))) return null;
+  const look = {};
+  if (c.look && typeof c.look === 'object') {
+    if (['round', 'pointy', 'long'].includes(c.look.ears)) look.ears = c.look.ears;
+    if (['long', 'fluffy', 'short'].includes(c.look.tail)) look.tail = c.look.tail;
+    if (c.look.horns === true) look.horns = true;
+  }
+  return { id: c.id, name: String(c.name || 'Custom').slice(0, 18), plan: c.plan, genome: c.genome.map((v) => clamp(v, 0, 1)), look };
+}
+
+function registerCustom(c) {
+  const i = state.customs.findIndex((x) => x.id === c.id);
+  if (i >= 0) state.customs[i] = c;
+  else state.customs.push(c);
+  makeCustomOrganism(c);
+}
+
+function applyConfig(cfg, { mergeCustoms = false } = {}) {
   if (!cfg || typeof cfg !== 'object') return;
+  if (Array.isArray(cfg.x)) {
+    if (!mergeCustoms) state.customs = [];
+    for (const raw of cfg.x.slice(0, MAX_CUSTOM * 2)) {
+      const c = validCustom(raw);
+      if (c) registerCustom(c);
+    }
+  }
   const validEnv = (e, fallback) => {
     if (!e || typeof e !== 'object') return fallback;
     const out = { ...fallback };
     for (const f of ENV_FIELDS) if (typeof e[f.key] === 'number') out[f.key] = clamp(e[f.key], f.min, f.max);
     if (TERRAINS[e.terrain]) out.terrain = e.terrain;
+    out.geo = GEO_BY_ID[e.geo] ? e.geo : 'open';
     out.biome = BIOME_BY_ID[e.biome] ? e.biome : 'custom';
     return out;
   };
@@ -74,6 +113,7 @@ function applyConfig(cfg) {
     if (o.length) state.organisms = o;
   }
   state.compare = !!cfg.c;
+  state.sexual = !!cfg.m;
   if (Number.isFinite(cfg.s)) state.seed = Math.abs(Math.floor(cfg.s)) % 1e9;
   state.env.A = validEnv(cfg.a, state.env.A);
   state.env.B = validEnv(cfg.b, state.env.B);
@@ -84,7 +124,12 @@ function loadConfig() {
   if (m) {
     try {
       const json = decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))));
-      applyConfig(JSON.parse(json));
+      // keep the visitor's own designs too
+      try {
+        const saved = JSON.parse(localStorage.getItem('primordia:cfg') || 'null');
+        if (saved && Array.isArray(saved.x)) for (const raw of saved.x) { const c = validCustom(raw); if (c) registerCustom(c); }
+      } catch (e) { /* ignore */ }
+      applyConfig(JSON.parse(json), { mergeCustoms: true });
       return;
     } catch (e) { /* ignore broken links */ }
   }
@@ -96,7 +141,7 @@ function loadConfig() {
 
 function saveConfig() {
   try {
-    localStorage.setItem('primordia:cfg', JSON.stringify({ o: state.organisms, c: state.compare ? 1 : 0, s: state.seed, a: state.env.A, b: state.env.B }));
+    localStorage.setItem('primordia:cfg', JSON.stringify({ ...configObject(), x: state.customs }));
   } catch (e) { /* ignore */ }
 }
 
@@ -193,13 +238,25 @@ function setSpeed(v) {
 function buildOrganisms() {
   const el = $('#organisms');
   el.innerHTML = '';
-  for (const o of ORGANISMS) {
+  const all = [...ORGANISMS, ...state.customs.map((c) => ORGANISM_BY_ID[c.id]).filter(Boolean)];
+  for (const o of all) {
     const c = h('canvas', { width: 260, height: 120 });
-    const card = h('button', {
-      class: `org ${state.organisms.includes(o.id) ? 'on' : ''}`, 'data-id': o.id, title: o.blurb,
-      'aria-pressed': state.organisms.includes(o.id) ? 'true' : 'false',
-      onclick: () => toggleOrganism(o.id),
-    }, c, h('b', {}, `${o.emoji} ${o.name}`), h('small', {}, o.tag));
+    const on = state.organisms.includes(o.id);
+    const card = o.custom
+      ? h('div', {
+        class: `org ${on ? 'on' : ''}`, 'data-id': o.id, role: 'button', tabindex: '0', title: 'Your design',
+        'aria-pressed': on ? 'true' : 'false',
+        onclick: () => toggleOrganism(o.id),
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOrganism(o.id); } },
+      }, c, h('b', {}, `${o.emoji} ${o.name}`), h('small', {}, o.tag),
+      h('div', { class: 'org-actions' },
+        h('span', { role: 'button', tabindex: '0', title: 'Edit design', 'aria-label': `Edit ${o.name}`, onclick: (e) => { e.stopPropagation(); openDesigner(o.id); } }, '✏️'),
+        h('span', { role: 'button', tabindex: '0', title: 'Delete design', 'aria-label': `Delete ${o.name}`, onclick: (e) => { e.stopPropagation(); deleteCustom(o.id); } }, '🗑️')))
+      : h('button', {
+        class: `org ${on ? 'on' : ''}`, 'data-id': o.id, title: o.blurb,
+        'aria-pressed': on ? 'true' : 'false',
+        onclick: () => toggleOrganism(o.id),
+      }, c, h('b', {}, `${o.emoji} ${o.name}`), h('small', {}, o.tag));
     el.append(card);
     const ctx = c.getContext('2d');
     const g = ctx.createLinearGradient(0, 0, 0, 120);
@@ -209,6 +266,46 @@ function buildOrganisms() {
     ctx.fillRect(0, 0, 260, 120);
     drawPortrait(ctx, o.genome, o.id, 130, 62, 150, 0.6, -0.35);
   }
+  if (state.customs.length < MAX_CUSTOM) {
+    el.append(h('button', { class: 'org design', title: 'Build your own creature', onclick: () => openDesigner(null) },
+      h('b', {}, '＋'), h('span', {}, 'Design your own')));
+  }
+}
+
+function deleteCustom(id) {
+  const c = state.customs.find((x) => x.id === id);
+  if (!c || !window.confirm(`Delete “${c.name}”?`)) return;
+  const inUse = state.organisms.includes(id);
+  if (inUse && !confirmRestart()) return;
+  state.customs = state.customs.filter((x) => x.id !== id);
+  if (inUse) {
+    state.organisms = state.organisms.filter((x) => x !== id);
+    if (!state.organisms.length) state.organisms = ['rabbit'];
+  }
+  buildOrganisms();
+  saveConfig();
+  if (inUse) restart();
+}
+
+// ------------------------------------------------------------------ reproduction
+
+function refreshRepro() {
+  $$('#repro button').forEach((b) => b.classList.toggle('on', (b.dataset.mode === 'mate') === state.sexual));
+  $('#repro-hint').textContent = state.sexual
+    ? 'Parents need a partner of their own species; babies mix both genomes. New species mostly form when groups are separated.'
+    : 'Every baby is a mutated copy of one parent. Simple and fast — species split easily.';
+}
+function buildRepro() {
+  $$('#repro button').forEach((b) => {
+    b.onclick = () => {
+      state.sexual = b.dataset.mode === 'mate';
+      for (const w of Object.values(worlds)) w.setSexual(state.sexual);
+      refreshRepro();
+      saveConfig();
+      uiDirty = true;
+    };
+  });
+  refreshRepro();
 }
 
 function toggleOrganism(id) {
@@ -245,6 +342,10 @@ function buildEnvPanel() {
     $('#biomes').append(h('button', { class: 'biome', 'data-id': b.id, title: b.name, onclick: () => setBiome(b.id) }, `${b.emoji} ${b.name}`));
   }
   $('#biomes').append(h('span', { class: 'biome custom', 'data-id': 'custom', hidden: true }, '✏️ Custom'));
+  $('#geos').innerHTML = '';
+  for (const g of GEOGRAPHIES) {
+    $('#geos').append(h('button', { class: 'biome', 'data-geo': g.id, title: g.desc, onclick: () => setGeo(g.id) }, `${g.emoji} ${g.name}`));
+  }
 
   const sl = $('#env-sliders');
   sl.innerHTML = '';
@@ -317,6 +418,16 @@ function setBiome(id) {
   if (worlds[state.editing]?.tick > 0) toast(`${BIOME_BY_ID[id].emoji} Climate shifted to “${BIOME_BY_ID[id].name}” — evolution will follow.`);
 }
 
+function setGeo(id) {
+  const env = state.env[state.editing];
+  if ((env.geo || 'open') === id) return;
+  env.geo = id;
+  refreshEnvPanel();
+  applyEnv(state.editing);
+  if (worlds[state.editing]?.tick > 0) toast(`${GEO_BY_ID[id].emoji} The land reshapes: ${GEO_BY_ID[id].name.toLowerCase()}.`);
+  uiDirty = true;
+}
+
 function fmtEnv(f, v) {
   if (f.key === 'temperature') return `${v > 0 ? '+' : ''}${v}${f.unit}`;
   if (f.key === 'predators') return v === 0 ? 'none' : `${v}/10`;
@@ -337,6 +448,7 @@ function refreshEnvPanel() {
     $('label span:last-child', s).textContent = fmtEnv(f, env[f.key]);
   });
   $('#terrain').value = env.terrain;
+  $$('#geos .biome').forEach((b) => b.classList.toggle('on', b.dataset.geo === (env.geo || 'open')));
   $('#env-tabs').hidden = !state.compare;
   $$('#env-tabs button[data-world]').forEach((b) => b.classList.toggle('on', b.dataset.world === state.editing));
   for (const k of Object.keys(views)) updateWorldTitle(k);
@@ -393,6 +505,8 @@ function loadScenario(s) {
   if (!confirmRestart()) return;
   state.organisms = s.organisms.slice();
   state.compare = s.compare;
+  state.sexual = !!s.sexual;
+  refreshRepro();
   state.env.A = { ...s.envA };
   state.env.B = { ...s.envB };
   state.editing = 'A';
@@ -408,8 +522,9 @@ function loadScenario(s) {
 
 function worldTitle(key) {
   const env = state.env[key];
-  if (env.biome !== 'custom' && BIOME_BY_ID[env.biome]) return `${BIOME_BY_ID[env.biome].emoji} ${BIOME_BY_ID[env.biome].name}`;
-  return `✏️ Custom · ${TERRAINS[env.terrain]?.label || ''}`;
+  const geo = env.geo && env.geo !== 'open' ? ` · ${GEO_BY_ID[env.geo].emoji} ${GEO_BY_ID[env.geo].name}` : '';
+  if (env.biome !== 'custom' && BIOME_BY_ID[env.biome]) return `${BIOME_BY_ID[env.biome].emoji} ${BIOME_BY_ID[env.biome].name}${geo}`;
+  return `✏️ Custom · ${TERRAINS[env.terrain]?.label || ''}${geo}`;
 }
 function updateWorldTitle(key) {
   const v = views[key];
@@ -467,7 +582,7 @@ function restart() {
   setRunning(false);
   const keys = state.compare ? ['A', 'B'] : ['A'];
   worlds = {};
-  for (const k of keys) worlds[k] = new World({ env: state.env[k], organisms: state.organisms, seed: state.seed, label: k });
+  for (const k of keys) worlds[k] = new World({ env: state.env[k], organisms: state.organisms, seed: state.seed, label: k, sexual: state.sexual });
   for (const k of Object.keys(views)) delete views[k];
   const wEl = $('#worlds'), tEl = $('#timelapses');
   wEl.innerHTML = '';
@@ -855,6 +970,148 @@ function updateUI(force = false) {
   }
 }
 
+// ------------------------------------------------------------------ designer
+
+const draft = { id: null, name: '', plan: 'mammal', genome: [], look: {} };
+let designerAnim = 0;
+const RABBIT_COST = phenotype(ORGANISM_BY_ID.rabbit.genome, ORGANISM_BY_ID.rabbit.mods).baseCost;
+
+function buildDesigner() {
+  const plans = $('#d-plans');
+  plans.innerHTML = '';
+  for (const id of PLANS) {
+    plans.append(h('button', { type: 'button', 'data-plan': id, onclick: () => { setDraftPlan(id); syncDesigner(); } }, `${PLAN_INFO[id].emoji} ${PLAN_INFO[id].label}`));
+  }
+  const genes = $('#d-genes');
+  genes.innerHTML = '';
+  GENES.forEach((g, i) => {
+    const val = h('span', {}, '');
+    const input = h('input', {
+      type: 'range', min: 0, max: 1, step: 0.01, 'data-i': i, 'aria-label': g.hidden ? 'Color hue' : g.label,
+      oninput: (e) => { draft.genome[i] = Number(e.target.value); syncDesigner(false); },
+    });
+    genes.append(h('div', { class: `slider ${g.key === 'hue' ? 'hue' : ''}` },
+      h('label', {}, h('span', {}, g.key === 'hue' ? '🎨 Color' : `${g.icon} ${g.label}`), val), input,
+      g.key === 'hue' ? null : h('div', { class: 'ends' }, h('span', {}, g.lo), h('span', {}, g.hi))));
+  });
+  $('#d-name').oninput = (e) => { draft.name = e.target.value; };
+  $('#d-base').onchange = (e) => {
+    const o = ORGANISM_BY_ID[e.target.value];
+    if (!o) return;
+    draft.plan = o.plan;
+    draft.genome = o.genome.slice();
+    draft.look = { ...(o.look || {}) };
+    syncDesigner();
+  };
+  $('#d-cancel').onclick = () => $('#designer').close();
+  $('#d-save').onclick = saveDesign;
+  $('#designer').addEventListener('close', () => cancelAnimationFrame(designerAnim));
+  $('#designer').addEventListener('click', (e) => { if (e.target === $('#designer')) $('#designer').close(); });
+}
+
+function setDraftPlan(id) {
+  draft.plan = id;
+  if (id === 'mammal') draft.look = { ears: draft.look.ears || 'round', tail: draft.look.tail || 'long', horns: !!draft.look.horns };
+  else draft.look = {};
+}
+
+function openDesigner(id) {
+  const c = id ? state.customs.find((x) => x.id === id) : null;
+  const base = c || { name: '', plan: 'mammal', genome: ORGANISM_BY_ID.rabbit.genome, look: ORGANISM_BY_ID.rabbit.look };
+  Object.assign(draft, { id: c ? c.id : null, name: base.name, plan: base.plan, genome: base.genome.slice(), look: { ...base.look } });
+  const sel = $('#d-base');
+  sel.innerHTML = '';
+  sel.append(h('option', { value: '' }, '— pick a template —'));
+  for (const o of [...ORGANISMS, ...state.customs.map((x) => ORGANISM_BY_ID[x.id]).filter(Boolean)]) sel.append(h('option', { value: o.id }, `${o.emoji} ${o.name}`));
+  $('#d-name').value = draft.name;
+  $('#d-save').textContent = c ? 'Save changes' : 'Save & add';
+  $('#designer h2').textContent = c ? `✏️ Edit “${c.name}”` : '✏️ Design an organism';
+  syncDesigner();
+  $('#designer').showModal();
+  const tick = (ts) => {
+    drawDesignerPreview(ts);
+    designerAnim = requestAnimationFrame(tick);
+  };
+  designerAnim = requestAnimationFrame(tick);
+}
+
+function syncDesigner(full = true) {
+  makeCustomOrganism({ id: '__draft', name: draft.name || 'Draft', plan: draft.plan, genome: draft.genome, look: draft.look });
+  if (full) {
+    $$('#d-plans button').forEach((b) => b.classList.toggle('on', b.dataset.plan === draft.plan));
+    $$('#d-genes input').forEach((inp) => { inp.value = draft.genome[Number(inp.dataset.i)]; });
+    const look = $('#d-look');
+    look.innerHTML = '';
+    if (draft.plan === 'mammal') {
+      const sel = (key, opts, label) => {
+        const s = h('select', { onchange: (e) => { draft.look[key] = e.target.value; syncDesigner(false); } },
+          opts.map((o) => h('option', { value: o, selected: draft.look[key] === o }, o)));
+        return h('label', { class: 'field' }, label, s);
+      };
+      look.append(sel('ears', ['round', 'pointy', 'long'], 'Ears'), sel('tail', ['long', 'fluffy', 'short'], 'Tail'),
+        h('label', { class: 'field' }, 'Horns', h('select', { onchange: (e) => { draft.look.horns = e.target.value === 'yes'; syncDesigner(false); } },
+          h('option', { value: 'no', selected: !draft.look.horns }, 'no'), h('option', { value: 'yes', selected: !!draft.look.horns }, 'yes'))));
+    }
+  }
+  $$('#d-genes .slider').forEach((el, i) => {
+    $('label span:last-child', el).textContent = GENES[i].key === 'hue' ? '' : `${Math.round(draft.genome[i] * 100)}%`;
+  });
+  // what these genes mean in practice
+  const info = PLAN_INFO[draft.plan];
+  const p = phenotype(draft.genome, info.mods);
+  const odds = 1 - killChance({ g: draft.genome, p });
+  const diet = draft.genome[GENE_INDEX.diet];
+  const dietLabel = diet > 0.65 ? 'Carnivore' : diet > 0.35 ? 'Omnivore' : 'Herbivore';
+  const items = [
+    `🌡️ Comfortable from <b>${p.coldLimit.toFixed(0)}°C</b> to <b>${p.heatLimit.toFixed(0)}°C</b>${info.mods.ecto ? ' (cold-blooded)' : ''}`,
+    `💨 Top speed <b>${p.speed.toFixed(2)}</b> <span class="muted">— predators run 1.9</span>`,
+    `🍽️ <b>${dietLabel}</b>: plants ${Math.round(p.herbEff * 100)}% · meat ${Math.round(p.meatEff * 100)}%`,
+    `🥚 <b>${p.litter}</b> ${p.litter === 1 ? 'baby' : 'babies'} per litter · adult at <b>${(p.maturity / YEAR).toFixed(1)}</b> years`,
+    `⏳ Lives about <b>${(p.maxAge / YEAR).toFixed(1)}</b> years`,
+    `⚡ Burns <b>${(p.baseCost / RABBIT_COST).toFixed(1)}×</b> a rabbit’s energy`,
+    `🛡️ Survives <b>${Math.round(odds * 100)}%</b> of predator attacks`,
+  ];
+  if (diet > 0.5) items.push('⚠️ Hunters need other species to eat — add some prey too.');
+  $('#d-stats').innerHTML = items.map((x) => `<li>${x}</li>`).join('');
+}
+
+function drawDesignerPreview(ts) {
+  const { ctx, w: cw, h: ch } = fit($('#d-preview'));
+  const g = ctx.createRadialGradient(cw / 2, ch * 0.55, 0, cw / 2, ch * 0.55, cw * 0.7);
+  g.addColorStop(0, '#2a3550');
+  g.addColorStop(1, '#121825');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(cw / 2, ch * 0.78, cw * 0.28, ch * 0.05, 0, 0, Math.PI * 2);
+  ctx.fill();
+  drawPortrait(ctx, draft.genome, '__draft', cw / 2, ch * 0.5, Math.min(cw, ch) * 0.95, ts * 0.006, -0.3);
+}
+
+function saveDesign() {
+  const info = PLAN_INFO[draft.plan];
+  const c = validCustom({
+    id: draft.id || `c${Date.now() % 1e9}`,
+    name: (draft.name || '').trim() || `My ${info.label.toLowerCase()}`,
+    plan: draft.plan, genome: draft.genome, look: draft.look,
+  });
+  if (!c) return;
+  const editing = !!draft.id;
+  const inUse = state.organisms.includes(c.id);
+  registerCustom(c);
+  $('#designer').close();
+  if (!editing || inUse) {
+    if (confirmRestart()) {
+      if (!inUse) state.organisms = [...state.organisms, c.id];
+      buildOrganisms();
+      restart();
+      toast(`${info.emoji} ${c.name} ${editing ? 'updated' : 'joins the world'}! Press ▶ Run.`);
+    } else buildOrganisms();
+  } else buildOrganisms();
+  saveConfig();
+}
+
 // ------------------------------------------------------------------ main loop
 
 let lastFrame = 0;
@@ -907,7 +1164,9 @@ function init() {
   loadConfig();
   buildSpeed();
   buildOrganisms();
+  buildRepro();
   buildEnvPanel();
+  buildDesigner();
   buildEvents();
   buildScenarios();
   popChart = new LineChart($('#chart-pop'), { yMin: 0 });

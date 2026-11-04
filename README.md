@@ -10,6 +10,9 @@ Turn on **⚖️ Compare** to run the same creatures in two different worlds sid
 ## Features
 
 - **8 starting organisms** — protocell, beetle, rabbit, lizard, frog, finch, grazer, wolf. Pick several to build a food chain.
+- **✏️ Organism designer**: choose a body plan (microbe, insect, mammal, reptile, amphibian, bird), set every gene with a slider, and watch a live preview plus a read-out of what it means in practice (comfort temperature range, top speed, diet, litter size, lifespan, energy use, odds of surviving a predator attack). Designs are saved in your browser and travel with share links.
+- **🧬 Cloning or 💞 mating**: with mating, parents need a compatible partner of their own species and babies mix both genomes. Gene flow then keeps populations together, so new species mostly appear when groups are separated.
+- **Landscapes**: open plain, 🌊 river, ⛰️ mountain range (one pass, cold peaks), 💧 great lake, 🏝️ archipelago. Barriers block movement and only the occasional swimmer or climber gets across. You can reshape the land mid-run, and a north–south temperature slider lets separated regions have different climates.
 - **Environment controls**: temperature, seasonal swing, humidity, plant growth, predators, oxygen, radiation (mutation rate), ground color. There are 8 biome presets, and every setting **changes live** while the simulation runs.
 - **Procedural creatures**: each one is drawn from its genes. Fur grows with insulation, ears grow with heat tolerance, legs/wings with speed, plates and spikes with armor, fangs and hooked beaks with carnivory, eyes and antennae with senses, humps/scales with drought tolerance.
 - **Evolution timelapse**: compares the ancestor with today's most common species, shows a filmstrip across time, and plots trait drift bars. You can scrub or **replay** the whole history.
@@ -17,7 +20,7 @@ Turn on **⚖️ Compare** to run the same creatures in two different worlds sid
 - **Charts**: population per species, temperature, and any trait over time, with event markers.
 - **Journal**: a narrator explains what changed and why ("Fur ▲18% — thicker fur and fat to survive the cold").
 - **Meddle**: ☄️ meteor strike, ❄️ ice age, 🔥 global warming, 🌵 drought, 🌸 super bloom, 🦠 plague (hits the commonest species hardest), 🐾 predator invasion.
-- **Experiments**: one-click scenarios — Bergmann's rule, camouflage, giant Carboniferous insects, predator–prey arms race, desert vs jungle, life on Mars.
+- **Experiments**: one-click scenarios — Bergmann's rule, camouflage, giant Carboniferous insects, predator–prey arms race, desert vs jungle, life on Mars, island speciation, a river dividing a population.
 - **Inspect** any creature by clicking it. **Share** a link that recreates your exact setup (seeded and reproducible).
 
 ## How the model works (the short version)
@@ -33,8 +36,9 @@ Each creature has a genome of 12 numbers between 0 and 1. Every tick it pays an 
 | Predators | Camouflage (matching the ground), speed (dodging), armor, large size |
 | Scarce food | Efficient, cheaper bodies; sharper senses |
 | Radiation | Faster mutation, which means more variation and more species |
+| Barriers (water, rock) | Separated populations stop exchanging genes and drift apart — allopatric speciation |
 
-Creatures eat plants (or other species, if they're carnivores), and well-fed adults reproduce asexually. Offspring inherit the genome with small mutations, so whoever fits the environment best leaves more offspring. Energy is conserved through the food chain: a hunter only gets back what its prey ate.
+Creatures eat plants (or other species, if they're carnivores), and well-fed adults reproduce, either by cloning or by mating with a compatible partner (if no partner turns up for a long time they can self-fertilise). Offspring inherit the genome with small mutations, so whoever fits the environment best leaves more offspring. Energy is conserved through the food chain: a hunter only gets back what its prey ate.
 
 It's a toy model, simplified for fun rather than accuracy, but the classic patterns come out on their own.
 
@@ -54,7 +58,7 @@ To balance-test the simulation without a browser:
 node tools/headless.mjs 60 rabbit all 3
 ```
 
-The arguments are years, organism(s), biome(s) or `all`, and the number of seeds. The script prints how many runs survived and the average trait change per biome.
+The arguments are years, organism(s), biome(s) or `all`, and the number of seeds. Environment variables add options: `SEXUAL=1` for mating, `GEO=river|mountains|lake|islands` for a landscape, `GRADIENT=30` for the north–south temperature difference. The script prints how many runs survived and the average trait change per biome.
 
 ## Deploy to GitHub Pages
 
