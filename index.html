@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Primordia — Evolution Sandbox</title>
+  <meta name="description" content="Pick an organism, shape its environment and watch a timelapse of how it evolves. Compare two worlds side by side.">
+  <meta name="theme-color" content="#0d1017">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🧬</span>
+      <div>
+        <h1>Primordia</h1>
+        <p>an evolution sandbox</p>
+      </div>
+    </div>
+    <div class="transport">
+      <button id="btn-run" class="btn primary" title="Run / pause (Space)">▶ Run</button>
+      <button id="btn-reset" class="btn" title="Start over with the current settings (R)">⟲ New run</button>
+      <div class="speed" role="group" aria-label="Simulation speed" id="speed"></div>
+    </div>
+    <div class="actions">
+      <label class="switch" title="Run two worlds side by side with different environments">
+        <input type="checkbox" id="compare">
+        <span class="track"><span class="knob"></span></span>
+        <span>⚖️ Compare<span class="lbl"> two worlds</span></span>
+      </label>
+      <button id="btn-share" class="btn ghost" title="Copy a link to this setup">🔗<span class="lbl"> Share</span></button>
+      <button id="btn-help" class="btn ghost" title="How does this work?">❔<span class="lbl"> How it works</span></button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <h2><span class="step">1</span> Starting life</h2>
+        <p class="hint">Pick one or more. Mix a hunter with prey to get a food chain.</p>
+        <div id="organisms" class="org-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="step">2</span> Environment</h2>
+        <div id="env-tabs" class="seg env-tabs" hidden>
+          <button data-world="A" class="on"><i class="dot A"></i>World A</button>
+          <button data-world="B"><i class="dot B"></i>World B</button>
+          <button id="copy-env" class="copy" title="Copy World A's settings into World B">A → B</button>
+        </div>
+        <p class="hint">Changes apply live — try shifting the climate mid-run.</p>
+        <div id="biomes" class="biomes"></div>
+        <div id="env-sliders" class="sliders"></div>
+        <div class="row">
+          <label class="field">Ground
+            <select id="terrain"></select>
+          </label>
+          <label class="field">Seed
+            <span class="seed"><input id="seed" inputmode="numeric" maxlength="9"><button id="seed-dice" class="icon" title="New random seed">🎲</button></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="step">3</span> Meddle</h2>
+        <p class="hint">Unleash an event on a running world.</p>
+        <div id="event-target" class="seg small" hidden>
+          <span>Target:</span>
+          <button data-target="A">A</button><button data-target="B">B</button><button data-target="both" class="on">Both</button>
+        </div>
+        <div id="events" class="event-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🧪 Experiments</h2>
+        <p class="hint">One-click setups that show a classic idea.</p>
+        <div id="scenarios" class="scenarios"></div>
+      </section>
+    </aside>
+
+    <main class="content">
+      <div id="worlds" class="worlds"></div>
+
+      <section class="panel timelapse">
+        <header class="panel-head">
+          <h2>🎞️ Evolution timelapse</h2>
+          <div class="tl-controls">
+            <button id="btn-replay" class="btn small">▶ Replay</button>
+            <input id="tl-scrub" type="range" min="0" max="1000" value="1000" aria-label="Scrub through time">
+            <span id="tl-year" class="tl-year">live</span>
+          </div>
+        </header>
+        <div id="timelapses" class="timelapses"></div>
+      </section>
+
+      <section class="panel insights">
+        <nav class="tabs" id="insight-tabs" role="tablist">
+          <button data-tab="pop" class="on">📈 Population</button>
+          <button data-tab="traits">🧬 Traits</button>
+          <button data-tab="tree">🌳 Family tree</button>
+          <button data-tab="log">📜 Journal</button>
+        </nav>
+        <div class="tab-body" data-tab="pop">
+          <canvas id="chart-pop" class="chart"></canvas>
+          <h3 class="chart-title">🌡️ Temperature</h3>
+          <canvas id="chart-temp" class="chart small"></canvas>
+        </div>
+        <div class="tab-body" data-tab="traits" hidden>
+          <div id="trait-chips" class="chips"></div>
+          <canvas id="chart-traits" class="chart"></canvas>
+          <p class="hint">Average gene value (0–1) across the whole population.<span class="compare-only"> Solid = World A, dashed = World B.</span></p>
+        </div>
+        <div class="tab-body" data-tab="tree" hidden>
+          <div id="tree-tabs" class="seg small" hidden>
+            <button data-world="A" class="on">World A</button><button data-world="B">World B</button>
+          </div>
+          <canvas id="chart-tree" class="chart tall"></canvas>
+          <p class="hint">A new species branches off when a population splits into two genetically distinct groups.</p>
+        </div>
+        <div class="tab-body" data-tab="log" hidden>
+          <ol id="journal" class="journal"></ol>
+        </div>
+      </section>
+      <footer class="foot">
+        Primordia is a toy model — inspired by real evolutionary ideas, simplified for fun.
+        <a href="https://github.com/marcoro11/evolution-simulator" target="_blank" rel="noopener">Source on GitHub</a>
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="help" class="help">
+    <form method="dialog"><button class="close" aria-label="Close">✕</button></form>
+    <h2>How Primordia works</h2>
+    <p>Every creature carries a <strong>genome</strong>: ten genes (size, speed, senses, fur, heat tolerance, drought tolerance, armor, diet, litter size, longevity) plus two color genes. Genes decide what it looks like and how much energy it burns.</p>
+    <ol>
+      <li><strong>Eat.</strong> Creatures wander, find plants (or prey) and gain energy. Every tick costs energy — more for big bodies, fast legs, sharp senses, armor…</li>
+      <li><strong>Survive.</strong> Cold, heat, dry air, thin oxygen and predators all drain energy or kill. Fur and big bodies keep heat in; big ears and sweat glands let it out; camouflage hides you from predators.</li>
+      <li><strong>Reproduce.</strong> Well-fed adults have offspring that inherit their genes with small random <strong>mutations</strong>. Radiation raises the mutation rate.</li>
+      <li><strong>Repeat.</strong> Whoever fits the environment best leaves the most offspring — so the average creature slowly changes. That’s natural selection.</li>
+    </ol>
+    <h3>Things to try</h3>
+    <ul>
+      <li>Turn on <em>⚖️ Compare</em> and give the same rabbits a meadow and a tundra. Watch fur and coat color split.</li>
+      <li>Add wolves to rabbits and watch an arms race (or a collapse).</li>
+      <li>Crank oxygen to 33% for beetles: hello, giant insects.</li>
+      <li>Drop a ☄️ meteor or start an ❄️ ice age mid-run and see who recovers.</li>
+      <li>Click any creature in the world to inspect it.</li>
+    </ul>
+    <h3>Reading the screen</h3>
+    <ul>
+      <li>The <strong>top of each world is colder</strong>, the bottom warmer — creatures migrate to where they’re comfortable.</li>
+      <li>Dark shapes with red eyes are <strong>predators</strong> (the environment’s, they don’t evolve).</li>
+      <li>The <strong>timelapse</strong> shows the most common species at each moment; drag the slider to scrub through time.</li>
+    </ul>
+    <p class="hint">Keyboard: <kbd>Space</kbd> run/pause · <kbd>R</kbd> new run · <kbd>1</kbd>–<kbd>5</kbd> speed.</p>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

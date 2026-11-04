@@ -1,0 +1,10 @@
+{
+  "name": "evolution-simulator",
+  "private": true,
+  "type": "module",
+  "description": "A browser-based evolution sandbox. No build step: open index.html via any static server.",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "headless": "node tools/headless.mjs"
+  }
+}
